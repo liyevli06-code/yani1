@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  background: #eef1f3;
+}
+
+body {
+  background: #eef1f3;
+  color: #0b1f33;
+  font-feature-settings: "ss01", "kern";
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: #0b1f33;
+  color: #eef1f3;
+}
+
+:focus-visible {
+  outline: 2px solid #c84a04;
+  outline-offset: 2px;
+}
+
+@keyframes sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(350%);
+  }
+}
+
+.sweep {
+  animation: sweep 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep {
+    animation: none;
+    transform: translateX(0);
+    width: 100%;
+  }
+}
