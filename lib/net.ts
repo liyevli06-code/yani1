@@ -12,6 +12,9 @@ export function normalizeDomain(input: string): string | null {
   value = value.split(/[/?#]/)[0];
   value = value.replace(/^[^@]*@/, "").replace(/:\d+$/, "").replace(/\.$/, "");
   value = value.replace(/^\*\./, "");
+  // "www.example.com" means the user wants subdomains of example.com, not of www.example.com.
+  const withoutWww = value.replace(/^www\./, "");
+  if (withoutWww !== value && DOMAIN_RE.test(withoutWww)) value = withoutWww;
   if (!DOMAIN_RE.test(value) || isIP(value)) return null;
   return value;
 }
