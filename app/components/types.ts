@@ -30,3 +30,61 @@ export function categorize(probe?: ProbeResult): Category {
   if (probe.status >= 400) return "client";
   return "live";
 }
+
+/**
+ * Prefixes that often point to a more sensitive or higher-value host (admin panels,
+ * internal tools, environments not meant for the public). This is a naming-convention
+ * heuristic only — it does not probe or confirm anything, it just surfaces these hosts
+ * first so a reviewer looks at them before the long tail of ordinary names.
+ */
+const NOTABLE_PREFIXES = [
+  "admin",
+  "administrator",
+  "cpanel",
+  "webmail",
+  "mail",
+  "vpn",
+  "internal",
+  "intranet",
+  "staging",
+  "stage",
+  "dev",
+  "test",
+  "qa",
+  "uat",
+  "preprod",
+  "beta",
+  "demo",
+  "api",
+  "portal",
+  "panel",
+  "dashboard",
+  "backend",
+  "manage",
+  "sso",
+  "auth",
+  "login",
+  "git",
+  "jenkins",
+  "jira",
+  "grafana",
+  "kibana",
+  "db",
+  "database",
+  "sql",
+  "backup",
+  "ftp",
+  "ssh",
+  "remote",
+  "secure",
+  "old",
+  "legacy",
+  "dr",
+];
+
+export function notableLabel(host: string, domain: string): string | null {
+  if (host === domain) return null;
+  const prefix = host.slice(0, host.length - domain.length - 1).toLowerCase();
+  const firstLabel = prefix.split(".").pop() ?? prefix;
+  return NOTABLE_PREFIXES.includes(firstLabel) ? firstLabel : null;
+}

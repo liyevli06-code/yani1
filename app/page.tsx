@@ -10,6 +10,7 @@ import {
   SourceReport,
   SubdomainsResponse,
   categorize,
+  notableLabel,
 } from "./components/types";
 import { Lang, dictionaries, fill } from "./i18n";
 
@@ -198,6 +199,16 @@ export default function Page() {
     return { responding, ips: ips.size, counts };
   }, [rows, probes]);
 
+  const notable = useMemo(
+    () =>
+      rows
+        .map((r) => ({ row: r, label: notableLabel(r.host, domain) }))
+        .filter((x): x is { row: Discovered; label: string } => x.label !== null)
+        .sort((a, b) => a.row.host.localeCompare(b.row.host)),
+    [rows, domain]
+  );
+  const notableHosts = useMemo(() => new Set(notable.map((n) => n.row.host)), [notable]);
+
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = rows.filter(
@@ -205,6 +216,10 @@ export default function Page() {
     );
     const mul = sort.dir === "asc" ? 1 : -1;
     list.sort((a, b) => {
+      // Notable-by-name hosts (admin panels, internal tools, non-prod environments) stay
+      // pinned above the rest regardless of the chosen sort, so they're seen first.
+      const notableDiff = Number(notableHosts.has(b.host)) - Number(notableHosts.has(a.host));
+      if (notableDiff !== 0) return notableDiff;
       const pa = probes[a.host];
       const pb = probes[b.host];
       let result = 0;
@@ -214,7 +229,7 @@ export default function Page() {
       return result * mul || a.host.localeCompare(b.host);
     });
     return list;
-  }, [rows, probes, query, filter, sort]);
+  }, [rows, probes, query, filter, sort, notableHosts]);
 
   const busy = phase === "searching";
   const progress = rows.length ? checkedCount / rows.length : 0;
@@ -231,19 +246,19 @@ export default function Page() {
 
   return (
     <div className="mx-auto max-w-6xl px-5 pb-24 sm:px-8">
-      <header className="flex items-center justify-between border-b border-ink py-5">
+      <header className="sticky top-0 z-10 -mx-5 flex items-center justify-between border-b border-ink/10 bg-paper/85 px-5 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <div className="flex items-center gap-2.5">
           <Mark />
           <span className="text-lg font-bold tracking-tight">SubScope</span>
         </div>
-        <div className="flex gap-1 text-sm" role="group" aria-label="Language">
+        <div className="flex gap-1 rounded-full border border-ink/10 bg-white/70 p-1 text-sm" role="group" aria-label="Language">
           {(["en", "az"] as Lang[]).map((code) => (
             <button
               key={code}
               type="button"
               onClick={() => setLang(code)}
               aria-pressed={lang === code}
-              className={`rounded px-2.5 py-1 font-semibold ${
+              className={`rounded-full px-2.5 py-1 font-semibold transition-colors ${
                 lang === code ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
               }`}
             >
@@ -276,12 +291,12 @@ export default function Page() {
               placeholder={t.placeholder}
               aria-invalid={phase === "error" && errorKey === "invalid"}
               aria-describedby={phase === "error" ? "search-error" : undefined}
-              className="h-14 min-w-0 flex-1 rounded-md border-2 border-ink bg-white px-4 font-mono text-lg placeholder:text-ink-faint/70"
+              className="h-14 min-w-0 flex-1 rounded-xl border-2 border-ink bg-white px-4 font-mono text-lg shadow-sm placeholder:text-ink-faint/70 focus:shadow-md"
             />
             <button
               type="submit"
               disabled={busy || !input.trim()}
-              className="h-14 rounded-md bg-signal px-7 text-base font-bold text-white hover:bg-signal-dark disabled:cursor-not-allowed disabled:opacity-60"
+              className="h-14 rounded-xl bg-signal px-7 text-base font-bold text-white shadow-sm transition-colors hover:bg-signal-dark hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none"
             >
               {busy ? t.searching : t.search}
             </button>
@@ -290,8 +305,8 @@ export default function Page() {
           <div className="mt-4 min-h-[1.5rem]" aria-live="polite">
             {busy && (
               <div>
-                <div className="h-[3px] w-full overflow-hidden bg-line">
-                  <div className="sweep h-full w-1/4 bg-signal" />
+                <div className="h-[3px] w-full overflow-hidden rounded-full bg-line">
+                  <div className="sweep h-full w-1/4 rounded-full bg-signal" />
                 </div>
                 <p className="mt-2 text-sm text-ink-soft">{t.searchingNote}</p>
               </div>
@@ -305,9 +320,9 @@ export default function Page() {
         </div>
 
         <div className="hidden lg:block" aria-hidden="true">
-          <div className="border-t-2 border-ink pt-3">
+          <div className="rounded-xl border border-line bg-white/60 p-5 shadow-sm">
             <p className="text-sm text-ink-faint">{t.sampleLabel}</p>
-            <ul className="mt-3 divide-y divide-line border-y border-line font-mono text-[13.5px]">
+            <ul className="mt-3 divide-y divide-line font-mono text-[13.5px]">
               {SAMPLE.map((s) => (
                 <li key={s.prefix} className="flex items-center justify-between py-2.5">
                   <span>
@@ -326,23 +341,23 @@ export default function Page() {
       </section>
 
       {phase === "done" && (
-        <section aria-label={domain} className="border-t-2 border-ink pt-6">
-          <div className="flex flex-wrap items-end justify-between gap-x-10 gap-y-4">
-            <div>
-              <h2 className="font-mono text-xl font-semibold tracking-tight">{domain}</h2>
-              <dl className="mt-3 flex flex-wrap gap-x-9 gap-y-3">
-                {[
-                  [t.statFound, rows.length.toLocaleString()],
-                  [t.statResponding, stats.responding.toLocaleString()],
-                  [t.statIps, stats.ips.toLocaleString()],
-                  [t.statTime, `${(tookMs / 1000).toFixed(1)} ${t.seconds}`],
-                ].map(([label, value]) => (
-                  <div key={label}>
-                    <dt className="text-[13px] text-ink-soft">{label}</dt>
-                    <dd className="text-2xl font-bold tabular-nums tracking-tight">{value}</dd>
-                  </div>
-                ))}
-              </dl>
+        <section aria-label={domain} className="border-t-2 border-ink pt-7">
+          <div className="flex flex-wrap items-stretch justify-between gap-4">
+            <div className="flex min-w-0 flex-1 flex-wrap gap-3">
+              <div className="flex items-center rounded-xl border border-ink/10 bg-white px-4 py-3 shadow-sm">
+                <h2 className="truncate font-mono text-lg font-semibold tracking-tight">{domain}</h2>
+              </div>
+              {[
+                [t.statFound, rows.length.toLocaleString()],
+                [t.statResponding, stats.responding.toLocaleString()],
+                [t.statIps, stats.ips.toLocaleString()],
+                [t.statTime, `${(tookMs / 1000).toFixed(1)} ${t.seconds}`],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-line bg-white px-4 py-2.5 shadow-sm">
+                  <dt className="text-[12px] text-ink-soft">{label}</dt>
+                  <dd className="text-xl font-bold tabular-nums tracking-tight">{value}</dd>
+                </div>
+              ))}
             </div>
             <div className="flex gap-2">
               <button
@@ -350,7 +365,7 @@ export default function Page() {
                 disabled={view.length === 0}
                 title={t.exportHint}
                 onClick={() => downloadCsv(domain, view, probes)}
-                className="rounded-md bg-ink px-4 py-2.5 text-sm font-semibold text-paper hover:bg-ink-soft disabled:opacity-50"
+                className="rounded-xl bg-ink px-4 py-2.5 text-sm font-semibold text-paper shadow-sm transition-colors hover:bg-ink-soft disabled:opacity-50 disabled:shadow-none"
               >
                 {t.exportCsv}
               </button>
@@ -359,28 +374,77 @@ export default function Page() {
                 disabled={view.length === 0}
                 title={t.exportHint}
                 onClick={() => downloadTxt(domain, view)}
-                className="rounded-md border border-ink px-4 py-2.5 text-sm font-semibold hover:bg-ink hover:text-paper disabled:opacity-50"
+                className="rounded-xl border border-ink bg-white px-4 py-2.5 text-sm font-semibold shadow-sm transition-colors hover:bg-ink hover:text-paper disabled:opacity-50 disabled:shadow-none"
               >
                 {t.exportTxt}
               </button>
             </div>
           </div>
 
-          <p className="mt-5 text-[13px] leading-relaxed text-ink-soft">
-            <span className="font-semibold text-ink">{t.sources}:</span>{" "}
-            {reports.map((r, i) => (
-              <span key={r.name}>
-                {i > 0 && ", "}
-                {r.ok ? (
-                  `${r.name} (${r.count.toLocaleString()})`
-                ) : (
-                  <span className="text-warn" title={r.error}>
-                    {r.name} ({t.sourceFailed})
-                  </span>
-                )}
-              </span>
-            ))}
+          <p className="mt-5 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[13px] leading-relaxed text-ink-soft">
+            <span className="font-semibold text-ink">{t.sources}:</span>
+            {reports.map((r) =>
+              r.ok ? (
+                <span
+                  key={r.name}
+                  className="rounded-full border border-line bg-white px-2.5 py-0.5 font-medium text-ink-soft"
+                >
+                  {r.name} <span className="font-mono text-ink-faint">{r.count.toLocaleString()}</span>
+                </span>
+              ) : (
+                <span
+                  key={r.name}
+                  title={r.error}
+                  className="rounded-full border border-warn/30 bg-warn/10 px-2.5 py-0.5 font-medium text-warn"
+                >
+                  {r.name} ({t.sourceFailed})
+                </span>
+              )
+            )}
           </p>
+
+          {notable.length > 0 && (
+            <div className="mt-7 rounded-xl border border-signal/30 bg-signal/[0.06] p-5">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-signal" aria-hidden="true" />
+                <h3 className="text-sm font-bold tracking-tight">
+                  {t.notableTitle} <span className="font-mono font-normal text-ink-faint">{notable.length}</span>
+                </h3>
+              </div>
+              <p className="mt-1.5 max-w-[62ch] text-[13px] leading-relaxed text-ink-soft">{t.notableHint}</p>
+              <ul className="mt-3.5 flex flex-wrap gap-2">
+                {notable.map(({ row, label }) => {
+                  const probe = probes[row.host];
+                  const cat = categorize(probe);
+                  const dot =
+                    cat === "live"
+                      ? "bg-ok"
+                      : cat === "client"
+                      ? "bg-warn"
+                      : cat === "server"
+                      ? "bg-bad"
+                      : cat === "none"
+                      ? "bg-ink-faint"
+                      : "bg-line";
+                  return (
+                    <li key={row.host}>
+                      <a
+                        href={`https://${row.host}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={t.notableTooltip}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 bg-white px-3 py-1.5 font-mono text-[13px] font-medium text-ink shadow-sm transition-colors hover:border-signal hover:text-signal"
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} aria-hidden="true" />
+                        {label}
+                        <span className="text-ink-faint">.{domain}</span>
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
 
           {rows.length > 0 && (
             <div className="mt-6" aria-live="polite">
@@ -399,13 +463,16 @@ export default function Page() {
                 )}
               </div>
               <div
-                className="mt-2 h-[3px] w-full bg-line"
+                className="mt-2 h-[3px] w-full overflow-hidden rounded-full bg-line"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={rows.length}
                 aria-valuenow={checkedCount}
               >
-                <div className="h-full bg-ink transition-[width] duration-300" style={{ width: `${progress * 100}%` }} />
+                <div
+                  className="h-full rounded-full bg-ink transition-[width] duration-300"
+                  style={{ width: `${progress * 100}%` }}
+                />
               </div>
             </div>
           )}
@@ -427,7 +494,7 @@ export default function Page() {
                     setVisible(PAGE_SIZE);
                   }}
                   placeholder={t.filterPlaceholder}
-                  className="h-10 w-full rounded-md border border-ink/40 bg-white px-3 font-mono text-sm sm:w-64"
+                  className="h-10 w-full rounded-lg border border-ink/30 bg-white px-3 font-mono text-sm shadow-sm sm:w-64"
                 />
                 <div className="flex flex-wrap gap-2">
                   {filters.map((f) => (
@@ -439,10 +506,10 @@ export default function Page() {
                         setFilter(f.id);
                         setVisible(PAGE_SIZE);
                       }}
-                      className={`rounded-full border px-3.5 py-1.5 text-[13px] font-semibold ${
+                      className={`rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
                         filter === f.id
-                          ? "border-ink bg-ink text-paper"
-                          : "border-ink/30 text-ink-soft hover:border-ink hover:text-ink"
+                          ? "border-ink bg-ink text-paper shadow-sm"
+                          : "border-ink/20 bg-white text-ink-soft hover:border-ink hover:text-ink"
                       }`}
                     >
                       {f.label}
@@ -456,16 +523,19 @@ export default function Page() {
                 {view.length === 0 ? (
                   <p className="py-12 text-ink-soft">{t.noMatch}</p>
                 ) : (
-                  <ResultsTable
-                    rows={view}
-                    probes={probes}
-                    domain={domain}
-                    t={t}
-                    sort={sort}
-                    onSort={changeSort}
-                    visible={visible}
-                    onMore={() => setVisible((v) => v + PAGE_SIZE)}
-                  />
+                  <div className="overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+                    <ResultsTable
+                      rows={view}
+                      probes={probes}
+                      domain={domain}
+                      t={t}
+                      sort={sort}
+                      onSort={changeSort}
+                      visible={visible}
+                      onMore={() => setVisible((v) => v + PAGE_SIZE)}
+                      notableHosts={notableHosts}
+                    />
+                  </div>
                 )}
               </div>
             </>
@@ -474,9 +544,9 @@ export default function Page() {
       )}
 
       {(phase === "idle" || phase === "error") && (
-        <section className="grid gap-8 border-t border-line pt-10 md:grid-cols-3">
+        <section className="grid gap-5 border-t border-line pt-10 md:grid-cols-3">
           {t.notes.map((note) => (
-            <div key={note.title}>
+            <div key={note.title} className="rounded-xl border border-line bg-white/60 p-5">
               <h2 className="text-base font-bold tracking-tight">{note.title}</h2>
               <p className="mt-2 max-w-[44ch] text-[15px] leading-relaxed text-ink-soft">{note.body}</p>
             </div>
