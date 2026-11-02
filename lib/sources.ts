@@ -5,6 +5,9 @@ export type SourceName =
   | "HackerTarget"
   | "AlienVault OTX"
   | "Anubis"
+  | "CertSpotter"
+  | "urlscan.io"
+  | "RapidDNS"
   | "VirusTotal"
   | "SecurityTrails";
 
@@ -29,12 +32,56 @@ const SOURCES: Source[] = [
     name: "crt.sh",
     enabled: () => true,
     run: async (domain) => {
-      const rows = await fetchJson<{ name_value: string }[]>(
-        `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`,
-        {},
-        25000
-      );
+      const url = `https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`;
+      let rows: { name_value: string }[];
+      try {
+        rows = await fetchJson<{ name_value: string }[]>(url, {}, 22000);
+      } catch {
+        // crt.sh is often overloaded; one retry usually succeeds.
+        rows = await fetchJson<{ name_value: string }[]>(url, {}, 22000);
+      }
       return { hosts: rows.flatMap((r) => r.name_value.split("\n")) };
+    },
+  },
+  {
+    // Certificate Transparency, independent of crt.sh
+    name: "CertSpotter",
+    enabled: () => true,
+    run: async (domain) => {
+      const rows = await fetchJson<{ dns_names?: string[] }[]>(
+        `https://api.certspotter.com/v1/issuances?domain=${encodeURIComponent(
+          domain
+        )}&include_subdomains=true&expand=dns_names`,
+        {},
+        20000
+      );
+      return { hosts: (Array.isArray(rows) ? rows : []).flatMap((r) => r.dns_names ?? []) };
+    },
+  },
+  {
+    // Hostnames seen by urlscan.io scans
+    name: "urlscan.io",
+    enabled: () => true,
+    run: async (domain) => {
+      const data = await fetchJson<{
+        results?: { page?: { domain?: string }; task?: { domain?: string } }[];
+      }>(`https://urlscan.io/api/v1/search/?q=domain%3A${encodeURIComponent(domain)}&size=100`);
+      return {
+        hosts: (data.results ?? []).flatMap((r) => [r.page?.domain ?? "", r.task?.domain ?? ""]),
+      };
+    },
+  },
+  {
+    name: "RapidDNS",
+    enabled: () => true,
+    run: async (domain) => {
+      const html = await fetchText(
+        `https://rapiddns.io/subdomain/${encodeURIComponent(domain)}?full=1`,
+        20000
+      );
+      const escaped = domain.replace(/\./g, "\\.");
+      const matches = html.match(new RegExp(`[a-z0-9][a-z0-9._-]*\\.${escaped}`, "gi")) ?? [];
+      return { hosts: matches };
     },
   },
   {
