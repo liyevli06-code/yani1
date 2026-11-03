@@ -2,7 +2,10 @@ import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
 import type { LookupFunction } from "node:net";
+import type { TLSSocket } from "node:tls";
 import { isPrivateAddress } from "./net";
+
+export type SecurityHeaders = { present: string[]; missing: string[] };
 
 export type ProbeResult = {
   host: string;
@@ -14,7 +17,29 @@ export type ProbeResult = {
   title: string | null;
   redirect: string | null;
   error?: string;
+  securityHeaders?: SecurityHeaders;
+  /** Days until the TLS certificate expires; negative if already expired. Only set for https. */
+  tlsDaysLeft?: number | null;
 };
+
+/** A compact, well-known subset of response headers that harden a browser's handling of the page. */
+const SECURITY_HEADERS: { id: string; header: string }[] = [
+  { id: "HSTS", header: "strict-transport-security" },
+  { id: "CSP", header: "content-security-policy" },
+  { id: "X-Frame-Options", header: "x-frame-options" },
+  { id: "X-Content-Type-Options", header: "x-content-type-options" },
+  { id: "Referrer-Policy", header: "referrer-policy" },
+  { id: "Permissions-Policy", header: "permissions-policy" },
+];
+
+function checkSecurityHeaders(headers: http.IncomingHttpHeaders): SecurityHeaders {
+  const present: string[] = [];
+  const missing: string[] = [];
+  for (const { id, header } of SECURITY_HEADERS) {
+    (headers[header] ? present : missing).push(id);
+  }
+  return { present, missing };
+}
 
 /** DNS lookup that refuses non-public addresses, so a probe can never reach internal services. */
 const safeLookup: LookupFunction = (hostname, options, callback) => {
@@ -99,6 +124,21 @@ function request(
         },
       },
       (res) => {
+        // The certificate has to be read as soon as headers arrive: truncating a large body
+        // below calls res.destroy(), which tears down the TLS socket, and a destroyed socket's
+        // getPeerCertificate() comes back empty. Reading it now, before any of that, is safe.
+        let tlsDaysLeft: number | null = null;
+        if (scheme === "https") {
+          try {
+            const cert = (res.socket as TLSSocket | undefined)?.getPeerCertificate?.();
+            if (cert?.valid_to) {
+              tlsDaysLeft = Math.round((new Date(cert.valid_to).getTime() - Date.now()) / 86_400_000);
+            }
+          } catch {
+            // No certificate available — leave it unset.
+          }
+        }
+
         const chunks: Buffer[] = [];
         let size = 0;
         res.on("data", (chunk: Buffer) => {
@@ -111,6 +151,7 @@ function request(
           const title = /<title[^>]*>([\s\S]{0,200}?)<\/title>/i.exec(body)?.[1]?.replace(/\s+/g, " ").trim() ?? null;
           const server = (res.headers["server"] as string | undefined) ?? null;
           const location = (res.headers["location"] as string | undefined) ?? null;
+
           resolve({
             status: res.statusCode ?? null,
             scheme,
@@ -118,6 +159,8 @@ function request(
             tech: detectTech(res.headers, body),
             title: title || null,
             redirect: location,
+            securityHeaders: checkSecurityHeaders(res.headers),
+            tlsDaysLeft,
           });
         };
         res.on("end", finish);

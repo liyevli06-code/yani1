@@ -9,6 +9,7 @@ import {
   ProbeResult,
   SourceReport,
   SubdomainsResponse,
+  Wildcard,
   categorize,
   notableLabel,
 } from "./components/types";
@@ -20,6 +21,8 @@ type Filter = "all" | Exclude<Category, "pending">;
 const PAGE_SIZE = 200;
 const BATCH_SIZE = 6;
 const WORKERS = 4;
+const HISTORY_KEY = "subscope-history";
+const HISTORY_MAX = 8;
 
 const SAMPLE = [
   { prefix: "api.", status: "200", dot: "bg-ok" },
@@ -50,14 +53,18 @@ export default function Page() {
   const [errorKey, setErrorKey] = useState<"invalid" | "noSources" | "generic" | null>(null);
   const [domain, setDomain] = useState("");
   const [tookMs, setTookMs] = useState(0);
+  const [cached, setCached] = useState(false);
+  const [wildcard, setWildcard] = useState<Wildcard | null>(null);
   const [reports, setReports] = useState<SourceReport[]>([]);
   const [rows, setRows] = useState<Discovered[]>([]);
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
   const [checking, setChecking] = useState(false);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [hideEmpty, setHideEmpty] = useState(false);
   const [sort, setSort] = useState<SortState>({ key: "host", dir: "asc" });
   const [visible, setVisible] = useState(PAGE_SIZE);
+  const [history, setHistory] = useState<string[]>([]);
 
   const searchAbort = useRef<AbortController | null>(null);
   const probeAbort = useRef<AbortController | null>(null);
@@ -76,6 +83,30 @@ export default function Page() {
       localStorage.setItem("subscope-lang", lang);
     } catch {}
   }, [lang]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) ?? "[]");
+      if (Array.isArray(saved)) setHistory(saved.filter((x) => typeof x === "string").slice(0, HISTORY_MAX));
+    } catch {}
+  }, []);
+
+  function rememberDomain(value: string) {
+    setHistory((prev) => {
+      const next = [value, ...prev.filter((d) => d !== value)].slice(0, HISTORY_MAX);
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
+
+  function clearHistory() {
+    setHistory([]);
+    try {
+      localStorage.removeItem(HISTORY_KEY);
+    } catch {}
+  }
 
   async function runProbes(hosts: string[], signal: AbortSignal) {
     const queue = [...hosts];
@@ -121,9 +152,7 @@ export default function Page() {
     if (probeAbort.current?.signal === signal) setChecking(false);
   }
 
-  async function onSubmit(event: FormEvent) {
-    event.preventDefault();
-    const value = input.trim();
+  async function runSearch(value: string) {
     if (!value || phase === "searching") return;
 
     searchAbort.current?.abort();
@@ -138,7 +167,10 @@ export default function Page() {
     setChecking(false);
     setQuery("");
     setFilter("all");
+    setHideEmpty(false);
     setVisible(PAGE_SIZE);
+    setWildcard(null);
+    setCached(false);
 
     try {
       const res = await fetch(`/api/subdomains?domain=${encodeURIComponent(value)}`, {
@@ -152,9 +184,13 @@ export default function Page() {
       }
       setDomain(data.domain);
       setTookMs(data.tookMs);
+      setCached(data.cached);
+      setWildcard(data.wildcard);
       setReports(data.sources);
       setRows(data.subdomains);
       setPhase("done");
+      setInput(data.domain);
+      rememberDomain(data.domain);
 
       if (data.subdomains.length > 0) {
         const probe = new AbortController();
@@ -170,6 +206,11 @@ export default function Page() {
         setPhase("error");
       }
     }
+  }
+
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
+    void runSearch(input.trim());
   }
 
   function stopChecking() {
@@ -211,9 +252,13 @@ export default function Page() {
 
   const view = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = rows.filter(
-      (r) => (!q || r.host.includes(q)) && (filter === "all" || categorize(probes[r.host]) === filter)
-    );
+    const list = rows.filter((r) => {
+      if (q && !r.host.includes(q)) return false;
+      const cat = categorize(probes[r.host]);
+      if (filter !== "all" && cat !== filter) return false;
+      if (hideEmpty && filter !== "none" && cat === "none") return false;
+      return true;
+    });
     const mul = sort.dir === "asc" ? 1 : -1;
     list.sort((a, b) => {
       // Notable-by-name hosts (admin panels, internal tools, non-prod environments) stay
@@ -229,7 +274,7 @@ export default function Page() {
       return result * mul || a.host.localeCompare(b.host);
     });
     return list;
-  }, [rows, probes, query, filter, sort, notableHosts]);
+  }, [rows, probes, query, filter, hideEmpty, sort, notableHosts]);
 
   const busy = phase === "searching";
   const progress = rows.length ? checkedCount / rows.length : 0;
@@ -268,7 +313,15 @@ export default function Page() {
         </div>
       </header>
 
-      <section className="grid items-center gap-12 pb-12 pt-14 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:pt-20">
+      <section className="relative grid items-center gap-12 pb-12 pt-14 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,0.75fr)] lg:pt-20">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -left-24 -top-16 -z-10 h-[26rem] w-[26rem] rounded-full bg-signal/[0.08] blur-[90px]"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute -right-10 top-24 -z-10 hidden h-72 w-72 rounded-full bg-redir/[0.07] blur-[80px] lg:block"
+        />
         <div>
           <h1 className="max-w-[16ch] text-[2.6rem] font-extrabold leading-[1.02] tracking-[-0.035em] sm:text-6xl lg:text-[4.25rem]">
             {t.headline}
@@ -301,6 +354,32 @@ export default function Page() {
               {busy ? t.searching : t.search}
             </button>
           </form>
+
+          {history.length > 0 && phase !== "searching" && (
+            <div className="mt-4 flex flex-wrap items-center gap-1.5 text-[13px]">
+              <span className="text-ink-faint">{t.historyLabel}:</span>
+              {history.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => {
+                    setInput(d);
+                    void runSearch(d);
+                  }}
+                  className="rounded-full border border-ink/15 bg-white/70 px-2.5 py-1 font-mono text-ink-soft transition-colors hover:border-ink hover:text-ink"
+                >
+                  {d}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={clearHistory}
+                className="px-1.5 py-1 text-ink-faint underline underline-offset-2 hover:text-ink-soft"
+              >
+                {t.historyClear}
+              </button>
+            </div>
+          )}
 
           <div className="mt-4 min-h-[1.5rem]" aria-live="polite">
             {busy && (
@@ -358,6 +437,14 @@ export default function Page() {
                   <dd className="text-xl font-bold tabular-nums tracking-tight">{value}</dd>
                 </div>
               ))}
+              {cached && (
+                <div
+                  title={t.cachedNote}
+                  className="flex items-center rounded-xl border border-line bg-white px-3 py-2.5 text-[12px] font-medium text-ink-faint shadow-sm"
+                >
+                  {t.cachedNote}
+                </div>
+              )}
             </div>
             <div className="flex gap-2">
               <button
@@ -402,6 +489,16 @@ export default function Page() {
               )
             )}
           </p>
+
+          {wildcard?.detected && (
+            <div className="mt-6 rounded-xl border border-bad/30 bg-bad/[0.06] p-5">
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-bad" aria-hidden="true" />
+                <h3 className="text-sm font-bold tracking-tight text-bad">{t.wildcardTitle}</h3>
+              </div>
+              <p className="mt-1.5 max-w-[68ch] text-[13px] leading-relaxed text-ink-soft">{t.wildcardHint}</p>
+            </div>
+          )}
 
           {notable.length > 0 && (
             <div className="mt-7 rounded-xl border border-signal/30 bg-signal/[0.06] p-5">
@@ -516,6 +613,21 @@ export default function Page() {
                       <span className="ml-1.5 font-mono font-normal opacity-70">{stats.counts[f.id]}</span>
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    aria-pressed={hideEmpty}
+                    onClick={() => {
+                      setHideEmpty((v) => !v);
+                      setVisible(PAGE_SIZE);
+                    }}
+                    className={`rounded-full border px-3.5 py-1.5 text-[13px] font-semibold transition-colors ${
+                      hideEmpty
+                        ? "border-ink bg-ink text-paper shadow-sm"
+                        : "border-ink/20 bg-white text-ink-soft hover:border-ink hover:text-ink"
+                    }`}
+                  >
+                    {t.colHideEmpty}
+                  </button>
                 </div>
               </div>
 

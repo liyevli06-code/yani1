@@ -1,11 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeDomain } from "@/lib/net";
-import { discoverSubdomains } from "@/lib/sources";
+import { cacheGet, cacheSet } from "@/lib/cache";
+import { checkWildcardDns, normalizeDomain } from "@/lib/net";
+import { discoverSubdomains, Discovered, SourceReport } from "@/lib/sources";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+
+const CACHE_TTL_MS = 10 * 60_000;
+
+type CachedResult = {
+  hosts: Discovered[];
+  reports: SourceReport[];
+  wildcard: { detected: boolean; ips: string[] };
+};
 
 export async function GET(req: NextRequest) {
   const limited = rateLimit(`subdomains:${clientIp(req)}`, 10, 60_000);
@@ -26,7 +35,20 @@ export async function GET(req: NextRequest) {
   }
 
   const started = Date.now();
-  const { hosts, reports } = await discoverSubdomains(domain);
+  const cacheKey = `subdomains:${domain}`;
+  let cached = true;
+  let result = cacheGet<CachedResult>(cacheKey);
+
+  if (!result) {
+    cached = false;
+    const [discovery, wildcard] = await Promise.all([discoverSubdomains(domain), checkWildcardDns(domain)]);
+    result = { hosts: discovery.hosts, reports: discovery.reports, wildcard };
+
+    const hasAnyData = result.hosts.length > 0 || result.reports.some((r) => r.ok);
+    if (hasAnyData) cacheSet(cacheKey, result, CACHE_TTL_MS);
+  }
+
+  const { hosts, reports, wildcard } = result;
 
   if (hosts.length === 0 && reports.every((r) => !r.ok)) {
     return NextResponse.json(
@@ -44,5 +66,7 @@ export async function GET(req: NextRequest) {
     total: hosts.length,
     subdomains: hosts,
     sources: reports,
+    wildcard,
+    cached,
   });
 }

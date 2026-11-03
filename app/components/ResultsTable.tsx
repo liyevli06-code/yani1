@@ -4,6 +4,47 @@ import type { Dict } from "../i18n";
 import { fill } from "../i18n";
 import { Discovered, ProbeResult, categorize } from "./types";
 
+function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
+  const headers = probe?.securityHeaders;
+  const cert = probe?.tlsDaysLeft;
+
+  if (!headers && cert === undefined) return <span className="text-ink-faint">—</span>;
+
+  const score = headers?.present.length ?? 0;
+  const headerColor =
+    score >= 5 ? "border-ok/40 bg-ok/10 text-ok" : score >= 3 ? "border-warn/40 bg-warn/10 text-warn" : "border-bad/40 bg-bad/10 text-bad";
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {headers && (
+        <span
+          title={
+            headers.missing.length > 0
+              ? fill(t.securityMissing, { list: headers.missing.join(", ") })
+              : t.securityGood
+          }
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[11.5px] font-semibold ${headerColor}`}
+        >
+          {score}/6
+        </span>
+      )}
+      {typeof cert === "number" && (
+        <span
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${
+            cert < 0
+              ? "border-bad/40 bg-bad/10 text-bad"
+              : cert < 14
+              ? "border-warn/40 bg-warn/10 text-warn"
+              : "border-line text-ink-faint"
+          }`}
+        >
+          {cert < 0 ? t.certExpired : fill(t.certDaysLeft, { n: cert })}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export type SortKey = "host" | "status" | "ip";
 export type SortState = { key: SortKey; dir: "asc" | "desc" };
 
@@ -119,6 +160,9 @@ export default function ResultsTable({
               <th scope="col" className="py-3 pr-6 text-left text-[13px] font-semibold text-ink-soft">
                 {t.colTech}
               </th>
+              <th scope="col" className="py-3 pr-6 text-left text-[13px] font-semibold text-ink-soft">
+                {t.colSecurity}
+              </th>
               <th scope="col" className="py-3 pr-2 text-left text-[13px] font-semibold text-ink-soft">
                 {t.colSources}
               </th>
@@ -159,6 +203,9 @@ export default function ResultsTable({
                   </td>
                   <td className="py-3 pr-6 text-sm text-ink-soft">
                     {tech || <span className="text-ink-faint">—</span>}
+                  </td>
+                  <td className="py-3 pr-6">
+                    <SecurityCell probe={probe} t={t} />
                   </td>
                   <td className="py-3 pr-2 text-xs text-ink-faint">{row.sources.join(", ")}</td>
                   <td className="py-2.5 pr-5 text-right">

@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import dns from "node:dns";
 import { isIP } from "node:net";
 
 /** Domain name check: labels of letters/digits/hyphens, a TLD of 2+ letters, max 253 chars. */
@@ -80,6 +82,21 @@ export async function fetchJson<T = unknown>(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Looks up a random, almost-certainly-nonexistent hostname under the domain. If it still
+ * resolves, the domain has a DNS wildcard, and every "found" subdomain could be a false
+ * positive — the UI needs to warn about that instead of presenting the list as fact.
+ */
+export async function checkWildcardDns(domain: string): Promise<{ detected: boolean; ips: string[] }> {
+  const probe = `subscope-${crypto.randomBytes(8).toString("hex")}.${domain}`;
+  const [v4, v6] = await Promise.allSettled([dns.promises.resolve4(probe), dns.promises.resolve6(probe)]);
+  const ips = [
+    ...(v4.status === "fulfilled" ? v4.value : []),
+    ...(v6.status === "fulfilled" ? v6.value : []),
+  ];
+  return { detected: ips.length > 0, ips };
 }
 
 export async function fetchText(url: string, timeoutMs = 15000): Promise<string> {

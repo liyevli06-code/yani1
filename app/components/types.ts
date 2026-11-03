@@ -1,3 +1,5 @@
+export type SecurityHeaders = { present: string[]; missing: string[] };
+
 export type ProbeResult = {
   host: string;
   ips: string[];
@@ -8,10 +10,13 @@ export type ProbeResult = {
   title: string | null;
   redirect: string | null;
   error?: string;
+  securityHeaders?: SecurityHeaders;
+  tlsDaysLeft?: number | null;
 };
 
 export type SourceReport = { name: string; ok: boolean; count: number; error?: string };
 export type Discovered = { host: string; sources: string[] };
+export type Wildcard = { detected: boolean; ips: string[] };
 
 export type SubdomainsResponse = {
   domain: string;
@@ -19,6 +24,8 @@ export type SubdomainsResponse = {
   total: number;
   subdomains: Discovered[];
   sources: SourceReport[];
+  wildcard: Wildcard;
+  cached: boolean;
 };
 
 export type Category = "live" | "client" | "server" | "none" | "pending";
