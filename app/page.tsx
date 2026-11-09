@@ -3,9 +3,11 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ResultsTable, { SortKey, SortState } from "./components/ResultsTable";
 import { downloadCsv, downloadTxt } from "./components/export";
+import { calendarDiff } from "./components/time";
 import {
   Category,
   Discovered,
+  DomainExpiry,
   ProbeResult,
   SourceReport,
   SubdomainsResponse,
@@ -55,6 +57,8 @@ export default function Page() {
   const [tookMs, setTookMs] = useState(0);
   const [cached, setCached] = useState(false);
   const [wildcard, setWildcard] = useState<Wildcard | null>(null);
+  const [registration, setRegistration] = useState<DomainExpiry | null>(null);
+  const [now, setNow] = useState<Date | null>(null);
   const [reports, setReports] = useState<SourceReport[]>([]);
   const [rows, setRows] = useState<Discovered[]>([]);
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
@@ -107,6 +111,14 @@ export default function Page() {
       localStorage.removeItem(HISTORY_KEY);
     } catch {}
   }
+
+  // Keeps the "time until renewal" countdown live without re-fetching anything.
+  useEffect(() => {
+    if (!registration?.expiresAt) return;
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, [registration]);
 
   async function runProbes(hosts: string[], signal: AbortSignal) {
     const queue = [...hosts];
@@ -171,6 +183,8 @@ export default function Page() {
     setVisible(PAGE_SIZE);
     setWildcard(null);
     setCached(false);
+    setRegistration(null);
+    setNow(null);
 
     try {
       const res = await fetch(`/api/subdomains?domain=${encodeURIComponent(value)}`, {
@@ -186,6 +200,7 @@ export default function Page() {
       setTookMs(data.tookMs);
       setCached(data.cached);
       setWildcard(data.wildcard);
+      setRegistration(data.registration);
       setReports(data.sources);
       setRows(data.subdomains);
       setPhase("done");
@@ -467,6 +482,42 @@ export default function Page() {
               </button>
             </div>
           </div>
+
+          {registration && (
+            <div className="mt-5 flex flex-wrap items-center gap-3 rounded-xl border border-line bg-white px-4 py-3 shadow-sm">
+              <span className="text-[13px] font-semibold text-ink-soft">{t.domainExpiryTitle}</span>
+              {registration.expiresAt && now ? (
+                (() => {
+                  const diff = calendarDiff(new Date(registration.expiresAt as string), now);
+                  if (!diff) return <span className="text-ink-faint">{t.domainExpiryUnknown}</span>;
+                  if (diff.past) {
+                    return <span className="font-semibold text-bad">{t.domainExpiryExpired}</span>;
+                  }
+                  const urgent = diff.years === 0 && diff.months === 0 && diff.days < 30;
+                  return (
+                    <>
+                      <span
+                        className={`font-mono text-[13px] font-medium ${urgent ? "text-bad" : "text-ink"}`}
+                        title={new Date(registration.expiresAt).toLocaleString()}
+                      >
+                        {fill(t.timeYears, { n: diff.years })} {fill(t.timeMonths, { n: diff.months })}{" "}
+                        {fill(t.timeDays, { n: diff.days })} {fill(t.timeHours, { n: diff.hours })}{" "}
+                        {fill(t.timeMinutes, { n: diff.minutes })}
+                      </span>
+                      <span className="text-[13px] text-ink-soft">{t.domainExpiryRemaining}</span>
+                      {registration.registrar && (
+                        <span className="text-[13px] text-ink-faint">
+                          {fill(t.domainExpiryRegistrar, { name: registration.registrar })}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()
+              ) : (
+                <span className="text-[13px] text-ink-faint">{t.domainExpiryUnknown}</span>
+              )}
+            </div>
+          )}
 
           <p className="mt-5 flex flex-wrap items-center gap-x-1.5 gap-y-2 text-[13px] leading-relaxed text-ink-soft">
             <span className="font-semibold text-ink">{t.sources}:</span>

@@ -3,12 +3,16 @@ import { cacheGet, cacheSet } from "@/lib/cache";
 import { checkWildcardDns, normalizeDomain } from "@/lib/net";
 import { discoverSubdomains, Discovered, SourceReport } from "@/lib/sources";
 import { clientIp, rateLimit } from "@/lib/ratelimit";
+import { DomainExpiry, lookupDomainExpiry } from "@/lib/whois";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const CACHE_TTL_MS = 10 * 60_000;
+// The registration's renewal date barely ever changes, so it's worth caching far longer
+// than the subdomain list, independently of it.
+const WHOIS_CACHE_TTL_MS = 24 * 60 * 60_000;
 
 type CachedResult = {
   hosts: Discovered[];
@@ -60,6 +64,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  const whoisCacheKey = `whois:${domain}`;
+  let registration = cacheGet<DomainExpiry>(whoisCacheKey);
+  if (!registration) {
+    registration = await lookupDomainExpiry(domain);
+    if (registration.expiresAt) cacheSet(whoisCacheKey, registration, WHOIS_CACHE_TTL_MS);
+  }
+
   return NextResponse.json({
     domain,
     tookMs: Date.now() - started,
@@ -68,5 +79,6 @@ export async function GET(req: NextRequest) {
     sources: reports,
     wildcard,
     cached,
+    registration,
   });
 }

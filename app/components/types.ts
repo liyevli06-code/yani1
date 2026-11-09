@@ -17,6 +17,7 @@ export type ProbeResult = {
 export type SourceReport = { name: string; ok: boolean; count: number; error?: string };
 export type Discovered = { host: string; sources: string[] };
 export type Wildcard = { detected: boolean; ips: string[] };
+export type DomainExpiry = { expiresAt: string | null; registrar: string | null; error?: string };
 
 export type SubdomainsResponse = {
   domain: string;
@@ -26,6 +27,7 @@ export type SubdomainsResponse = {
   sources: SourceReport[];
   wildcard: Wildcard;
   cached: boolean;
+  registration: DomainExpiry;
 };
 
 export type Category = "live" | "client" | "server" | "none" | "pending";
