@@ -3,25 +3,67 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --c-paper: 238 241 243;
+  --c-surface: 255 255 255;
+  --c-ink: 11 31 51;
+  --c-ink-soft: 71 90 108;
+  --c-ink-faint: 107 124 140;
+  --c-line: 211 218 224;
+  --c-signal: 200 74 4;
+  --c-signal-dark: 166 60 2;
+  --c-ok: 22 121 76;
+  --c-redir: 34 87 197;
+  --c-warn: 152 96 10;
+  --c-bad: 179 38 30;
+  color-scheme: light;
+}
+
+:root.dark {
+  --c-paper: 13 20 28;
+  --c-surface: 22 31 41;
+  --c-ink: 230 236 240;
+  --c-ink-soft: 158 172 184;
+  --c-ink-faint: 110 126 140;
+  --c-line: 44 56 68;
+  --c-signal: 224 94 32;
+  --c-signal-dark: 196 78 24;
+  --c-ok: 61 170 116;
+  --c-redir: 94 140 230;
+  --c-warn: 199 140 40;
+  --c-bad: 224 90 80;
+  color-scheme: dark;
+}
+
 html {
-  background: #eef1f3;
+  background: rgb(var(--c-paper));
 }
 
 body {
-  background: #eef1f3;
-  color: #0b1f33;
+  background: rgb(var(--c-paper));
+  color: rgb(var(--c-ink));
   font-feature-settings: "ss01", "kern";
   -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
-  background: #0b1f33;
-  color: #eef1f3;
+  background: rgb(var(--c-ink));
+  color: rgb(var(--c-paper));
 }
 
 :focus-visible {
-  outline: 2px solid #c84a04;
+  outline: 2px solid rgb(var(--c-signal));
   outline-offset: 2px;
+}
+
+@media print {
+  .print\:hidden {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #0b1f33;
+  }
 }
 
 @keyframes sweep {

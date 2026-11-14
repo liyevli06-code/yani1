@@ -1,5 +1,11 @@
 /** @type {import('tailwindcss').Config} */
+function withOpacity(variable) {
+  return ({ opacityValue }) =>
+    opacityValue === undefined ? `rgb(var(${variable}))` : `rgb(var(${variable}) / ${opacityValue})`;
+}
+
 module.exports = {
+  darkMode: "class",
   content: ["./app/**/*.{ts,tsx}"],
   theme: {
     extend: {
@@ -8,14 +14,19 @@ module.exports = {
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "monospace"],
       },
       colors: {
-        paper: "#EEF1F3",
-        ink: { DEFAULT: "#0B1F33", soft: "#475A6C", faint: "#6B7C8C" },
-        line: "#D3DAE0",
-        signal: { DEFAULT: "#C84A04", dark: "#A63C02" },
-        ok: "#16794C",
-        redir: "#2257C5",
-        warn: "#98600A",
-        bad: "#B3261E",
+        paper: withOpacity("--c-paper"),
+        surface: withOpacity("--c-surface"),
+        ink: {
+          DEFAULT: withOpacity("--c-ink"),
+          soft: withOpacity("--c-ink-soft"),
+          faint: withOpacity("--c-ink-faint"),
+        },
+        line: withOpacity("--c-line"),
+        signal: { DEFAULT: withOpacity("--c-signal"), dark: withOpacity("--c-signal-dark") },
+        ok: withOpacity("--c-ok"),
+        redir: withOpacity("--c-redir"),
+        warn: withOpacity("--c-warn"),
+        bad: withOpacity("--c-bad"),
       },
     },
   },

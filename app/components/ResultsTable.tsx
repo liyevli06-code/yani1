@@ -2,7 +2,7 @@
 
 import type { Dict } from "../i18n";
 import { fill } from "../i18n";
-import { Discovered, ProbeResult, categorize } from "./types";
+import { confidenceOf, Discovered, ProbeResult, categorize } from "./types";
 
 function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
   const headers = probe?.securityHeaders;
@@ -42,6 +42,45 @@ function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
         </span>
       )}
     </div>
+  );
+}
+
+function SignalsCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
+  const chips: { key: string; label: string; cls: string; title?: string }[] = [];
+  if (probe?.takeover?.vulnerable) {
+    chips.push({
+      key: "takeover",
+      label: fill(t.takeoverBadge, { service: probe.takeover.service ?? "?" }),
+      cls: "border-bad/40 bg-bad/10 text-bad",
+      title: t.takeoverHint,
+    });
+  }
+  if (probe?.robots?.robotsTxt) chips.push({ key: "robots", label: t.robotsYes, cls: "border-line text-ink-faint" });
+  if (probe?.robots?.sitemapXml) chips.push({ key: "sitemap", label: t.sitemapYes, cls: "border-line text-ink-faint" });
+  if (chips.length === 0) return <span className="text-ink-faint">—</span>;
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {chips.map((c) => (
+        <span
+          key={c.key}
+          title={c.title}
+          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${c.cls}`}
+        >
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ConfidenceDot({ count, t }: { count: number; t: Dict }) {
+  const level = confidenceOf(count);
+  const cls = level === "high" ? "bg-ok" : level === "medium" ? "bg-warn" : "bg-ink-faint";
+  const label = level === "high" ? t.confidenceHigh : level === "medium" ? t.confidenceMedium : t.confidenceLow;
+  return (
+    <span title={`${label} — ${t.confidenceHint}`} className="inline-flex items-center gap-1.5">
+      <span className={`h-1.5 w-1.5 rounded-full ${cls}`} aria-hidden="true" />
+    </span>
   );
 }
 
@@ -113,6 +152,7 @@ export default function ResultsTable({
   visible,
   onMore,
   notableHosts,
+  ipInfo,
 }: {
   rows: Discovered[];
   probes: Record<string, ProbeResult>;
@@ -123,6 +163,7 @@ export default function ResultsTable({
   visible: number;
   onMore: () => void;
   notableHosts: Set<string>;
+  ipInfo?: Record<string, { org: string | null; country: string | null }>;
 }) {
   const shown = rows.slice(0, visible);
   const remaining = rows.length - shown.length;
@@ -161,9 +202,15 @@ export default function ResultsTable({
                 {t.colTech}
               </th>
               <th scope="col" className="py-3 pr-6 text-left text-[13px] font-semibold text-ink-soft">
+                {t.colAsn}
+              </th>
+              <th scope="col" className="py-3 pr-6 text-left text-[13px] font-semibold text-ink-soft">
                 {t.colSecurity}
               </th>
-              <th scope="col" className="py-3 pr-2 text-left text-[13px] font-semibold text-ink-soft">
+              <th scope="col" className="py-3 pr-6 text-left text-[13px] font-semibold text-ink-soft">
+                {t.colSignals}
+              </th>
+              <th scope="col" className="py-3 pr-2 text-left text-[13px] font-semibold text-ink-soft" title={t.confidenceHint}>
                 {t.colSources}
               </th>
               <th scope="col" className="w-8 py-3 pr-5" aria-hidden="true" />
@@ -204,10 +251,30 @@ export default function ResultsTable({
                   <td className="py-3 pr-6 text-sm text-ink-soft">
                     {tech || <span className="text-ink-faint">—</span>}
                   </td>
+                  <td className="py-3 pr-6 text-xs text-ink-soft">
+                    {(() => {
+                      const info = probe?.ips[0] ? ipInfo?.[probe.ips[0]] : undefined;
+                      if (!info || (!info.org && !info.country)) return <span className="text-ink-faint">—</span>;
+                      return (
+                        <span>
+                          {info.org ? <span className="block truncate max-w-[18ch]" title={info.org}>{info.org}</span> : null}
+                          {info.country ? <span className="text-ink-faint">{info.country}</span> : null}
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="py-3 pr-6">
                     <SecurityCell probe={probe} t={t} />
                   </td>
-                  <td className="py-3 pr-2 text-xs text-ink-faint">{row.sources.join(", ")}</td>
+                  <td className="py-3 pr-6">
+                    <SignalsCell probe={probe} t={t} />
+                  </td>
+                  <td className="py-3 pr-2 text-xs text-ink-faint">
+                    <span className="inline-flex items-center gap-1.5">
+                      <ConfidenceDot count={row.sources.length} t={t} />
+                      {row.sources.join(", ")}
+                    </span>
+                  </td>
                   <td className="py-2.5 pr-5 text-right">
                     <a
                       href={`https://${row.host}`}

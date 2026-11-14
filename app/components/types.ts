@@ -1,4 +1,7 @@
 export type SecurityHeaders = { present: string[]; missing: string[] };
+export type RobotsInfo = { robotsTxt: boolean; sitemapXml: boolean };
+export type FaviconInfo = { hash: number; bytes: number };
+export type TakeoverFinding = { vulnerable: boolean; service: string | null; cname: string | null };
 
 export type ProbeResult = {
   host: string;
@@ -12,7 +15,23 @@ export type ProbeResult = {
   error?: string;
   securityHeaders?: SecurityHeaders;
   tlsDaysLeft?: number | null;
+  cname?: string | null;
+  takeover?: TakeoverFinding | null;
+  favicon?: FaviconInfo | null;
+  robots?: RobotsInfo | null;
 };
+
+export type IpInfo = { ip: string; org: string | null; country: string | null; error?: string };
+
+/** Rough "how sure are we this host is real" signal from the number of independent sources
+ *  that reported it. Purely a count-based heuristic, not a verification of anything. */
+export type Confidence = "high" | "medium" | "low";
+
+export function confidenceOf(sourceCount: number): Confidence {
+  if (sourceCount >= 3) return "high";
+  if (sourceCount === 2) return "medium";
+  return "low";
+}
 
 export type SourceReport = { name: string; ok: boolean; count: number; error?: string };
 export type Discovered = { host: string; sources: string[] };

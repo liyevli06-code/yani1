@@ -4,8 +4,12 @@ import https from "node:https";
 import type { LookupFunction } from "node:net";
 import type { TLSSocket } from "node:tls";
 import { isPrivateAddress } from "./net";
+import { faviconHash } from "./mmh3";
+import { detectTakeover, TakeoverFinding } from "./takeover";
 
 export type SecurityHeaders = { present: string[]; missing: string[] };
+export type RobotsInfo = { robotsTxt: boolean; sitemapXml: boolean };
+export type FaviconInfo = { hash: number; bytes: number };
 
 export type ProbeResult = {
   host: string;
@@ -20,6 +24,12 @@ export type ProbeResult = {
   securityHeaders?: SecurityHeaders;
   /** Days until the TLS certificate expires; negative if already expired. Only set for https. */
   tlsDaysLeft?: number | null;
+  /** CNAME target, if this host is an alias rather than a direct A/AAAA record. */
+  cname?: string | null;
+  /** Set only when a dangling-CNAME subdomain-takeover pattern was matched — see lib/takeover.ts. */
+  takeover?: TakeoverFinding | null;
+  favicon?: FaviconInfo | null;
+  robots?: RobotsInfo | null;
 };
 
 /** A compact, well-known subset of response headers that harden a browser's handling of the page. */
@@ -101,11 +111,11 @@ function detectTech(headers: http.IncomingHttpHeaders, body: string): string[] {
   return [...tech];
 }
 
-function request(
-  host: string,
-  scheme: "https" | "http",
-  timeoutMs: number
-): Promise<Omit<ProbeResult, "host" | "ips">> {
+type RawRequestResult = Omit<ProbeResult, "host" | "ips" | "cname" | "takeover" | "favicon" | "robots"> & {
+  body: string;
+};
+
+function request(host: string, scheme: "https" | "http", timeoutMs: number): Promise<RawRequestResult> {
   return new Promise((resolve, reject) => {
     const lib = scheme === "https" ? https : http;
     const req = lib.request(
@@ -161,6 +171,7 @@ function request(
             redirect: location,
             securityHeaders: checkSecurityHeaders(res.headers),
             tlsDaysLeft,
+            body,
           });
         };
         res.on("end", finish);
@@ -172,6 +183,89 @@ function request(
     req.on("error", reject);
     req.end();
   });
+}
+
+/** Small, bounded GET used for favicon.ico and robots.txt/sitemap.xml — reuses the SSRF-safe
+ *  lookup, but doesn't need headers/cert/tech detection, so it's kept separate from `request`. */
+function smallGet(
+  host: string,
+  scheme: "https" | "http",
+  path: string,
+  timeoutMs: number,
+  maxBytes: number
+): Promise<{ status: number; body: Buffer; contentType: string | null }> {
+  return new Promise((resolve, reject) => {
+    const lib = scheme === "https" ? https : http;
+    const req = lib.request(
+      {
+        host,
+        port: scheme === "https" ? 443 : 80,
+        path,
+        method: "GET",
+        lookup: safeLookup,
+        timeout: timeoutMs,
+        rejectUnauthorized: false,
+        headers: { "user-agent": "Mozilla/5.0 (compatible; SubScope/1.0)", "accept-encoding": "identity" },
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        res.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size <= maxBytes) chunks.push(chunk);
+          else res.destroy();
+        });
+        const finish = () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks),
+            contentType: (res.headers["content-type"] as string | undefined) ?? null,
+          });
+        res.on("end", finish);
+        res.on("close", finish);
+        res.on("error", finish);
+      }
+    );
+    req.on("timeout", () => req.destroy(new Error("timeout")));
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function fetchFavicon(host: string, scheme: "https" | "http"): Promise<FaviconInfo | null> {
+  try {
+    const res = await smallGet(host, scheme, "/favicon.ico", 3500, 262144);
+    if (res.status !== 200 || res.body.length === 0) return null;
+    return { hash: faviconHash(res.body), bytes: res.body.length };
+  } catch {
+    return null;
+  }
+}
+
+async function checkRobots(host: string, scheme: "https" | "http"): Promise<RobotsInfo | null> {
+  try {
+    const [robots, sitemap] = await Promise.allSettled([
+      smallGet(host, scheme, "/robots.txt", 3000, 20000),
+      smallGet(host, scheme, "/sitemap.xml", 3000, 2000),
+    ]);
+    return {
+      robotsTxt: robots.status === "fulfilled" && robots.value.status === 200,
+      sitemapXml: sitemap.status === "fulfilled" && sitemap.value.status === 200,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves the CNAME chain, returning the final target, or null if this is a direct A/AAAA
+ *  record (most names) or the lookup fails outright. */
+async function resolveCname(host: string): Promise<string | null> {
+  try {
+    const chain = await dns.promises.resolveCname(host);
+    return chain.length > 0 ? chain[chain.length - 1] : null;
+  } catch {
+    return null;
+  }
 }
 
 async function resolveIps(host: string): Promise<string[]> {
@@ -209,16 +303,47 @@ export async function probeHost(host: string): Promise<ProbeResult> {
   if (ips.length === 0) return { ...empty, error: "no DNS record" };
   if (ips.every(isPrivateAddress)) return { ...empty, ips, error: "private address, not probed" };
 
+  const cname = await resolveCname(host);
+
+  let main: RawRequestResult | null = null;
+  let requestFailed = false;
+  let lastError = "";
   try {
-    const result = await request(host, "https", 6000);
-    return { host, ips, ...result };
+    main = await request(host, "https", 6000);
   } catch (httpsError) {
     try {
-      const result = await request(host, "http", 6000);
-      return { host, ips, ...result };
+      main = await request(host, "http", 6000);
     } catch (httpError) {
-      const message = (httpError as Error).message || (httpsError as Error).message;
-      return { ...empty, ips, error: message };
+      requestFailed = true;
+      lastError = (httpError as Error).message || (httpsError as Error).message;
     }
   }
+
+  const takeover = detectTakeover(cname, main?.body ?? "", requestFailed);
+
+  if (!main) {
+    return {
+      ...empty,
+      ips,
+      error: lastError || "no response",
+      cname,
+      takeover: takeover.vulnerable ? takeover : null,
+    };
+  }
+
+  const [favicon, robots] = await Promise.allSettled([
+    fetchFavicon(host, main.scheme as "https" | "http"),
+    checkRobots(host, main.scheme as "https" | "http"),
+  ]);
+
+  const { body: _body, ...rest } = main;
+  return {
+    host,
+    ips,
+    ...rest,
+    cname,
+    takeover: takeover.vulnerable ? takeover : null,
+    favicon: favicon.status === "fulfilled" ? favicon.value : null,
+    robots: robots.status === "fulfilled" ? robots.value : null,
+  };
 }
