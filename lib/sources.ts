@@ -1,4 +1,6 @@
+import dns from "node:dns";
 import { fetchJson, fetchText } from "./net";
+import { COMMON_SUBDOMAINS } from "./wordlist";
 
 export type SourceName =
   | "crt.sh"
@@ -9,7 +11,58 @@ export type SourceName =
   | "urlscan.io"
   | "RapidDNS"
   | "VirusTotal"
-  | "SecurityTrails";
+  | "SecurityTrails"
+  | "Common names (DNS)";
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+/** True if `name` resolves to any A/AAAA record, tried directly over DNS (no third party). */
+async function resolves(name: string): Promise<boolean> {
+  try {
+    const addrs = await withTimeout(dns.promises.resolve4(name), 2500);
+    if (addrs.length > 0) return true;
+  } catch {
+    // fall through to AAAA
+  }
+  try {
+    const addrs = await withTimeout(dns.promises.resolve6(name), 2500);
+    return addrs.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Resolves a wordlist of candidate hostnames with bounded concurrency, independent of any
+ *  certificate-transparency or passive-DNS index. This is what finds subdomains on domains
+ *  (often ccTLDs with little public CT-log coverage) the other sources below miss entirely. */
+async function bruteForceDns(domain: string, words: string[], concurrency = 30): Promise<string[]> {
+  const queue = [...words];
+  const found: string[] = [];
+  const worker = async () => {
+    while (queue.length > 0) {
+      const word = queue.shift();
+      if (!word) return;
+      const host = `${word}.${domain}`;
+      if (await resolves(host)) found.push(host);
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return found;
+}
 
 export type SourceReport = {
   name: SourceName;
@@ -132,6 +185,11 @@ const SOURCES: Source[] = [
       }
       return { hosts };
     },
+  },
+  {
+    name: "Common names (DNS)",
+    enabled: () => true,
+    run: async (domain) => ({ hosts: await bruteForceDns(domain, COMMON_SUBDOMAINS) }),
   },
   {
     name: "SecurityTrails",
