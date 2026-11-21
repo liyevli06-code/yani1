@@ -2,7 +2,27 @@
 
 import type { Dict } from "../i18n";
 import { fill } from "../i18n";
-import { confidenceOf, Discovered, ProbeResult, categorize } from "./types";
+import { confidenceOf, Discovered, ProbeResult, categorize, securityGrade } from "./types";
+
+function GradeBadge({ probe, t }: { probe?: ProbeResult; t: Dict }) {
+  const result = securityGrade(probe);
+  if (!result) return null;
+  const { grade, score } = result;
+  const cls =
+    grade === "A+" || grade === "A"
+      ? "border-ok/40 bg-ok/10 text-ok"
+      : grade === "B" || grade === "C"
+      ? "border-warn/40 bg-warn/10 text-warn"
+      : "border-bad/40 bg-bad/10 text-bad";
+  return (
+    <span
+      title={fill(t.gradeHint, { score })}
+      className={`inline-flex items-center rounded-full border px-2 py-0.5 font-mono text-[11.5px] font-bold ${cls}`}
+    >
+      {grade}
+    </span>
+  );
+}
 
 function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
   const headers = probe?.securityHeaders;
@@ -14,8 +34,14 @@ function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
   const headerColor =
     score >= 5 ? "border-ok/40 bg-ok/10 text-ok" : score >= 3 ? "border-warn/40 bg-warn/10 text-warn" : "border-bad/40 bg-bad/10 text-bad";
 
+  const tlsTitle =
+    probe?.tlsProtocol || probe?.tlsCipher
+      ? `${probe?.tlsProtocol ?? "?"} · ${probe?.tlsCipher ?? "?"}`
+      : undefined;
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
+      <GradeBadge probe={probe} t={t} />
       {headers && (
         <span
           title={
@@ -30,15 +56,19 @@ function SecurityCell({ probe, t }: { probe?: ProbeResult; t: Dict }) {
       )}
       {typeof cert === "number" && (
         <span
+          title={tlsTitle}
           className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11.5px] font-medium ${
             cert < 0
               ? "border-bad/40 bg-bad/10 text-bad"
               : cert < 14
               ? "border-warn/40 bg-warn/10 text-warn"
+              : probe?.tlsWeak
+              ? "border-warn/40 bg-warn/10 text-warn"
               : "border-line text-ink-faint"
           }`}
         >
           {cert < 0 ? t.certExpired : fill(t.certDaysLeft, { n: cert })}
+          {probe?.tlsWeak ? ` · ${t.tlsWeakBadge}` : ""}
         </span>
       )}
     </div>

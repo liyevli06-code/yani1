@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import ResultsTable, { SortKey, SortState } from "./components/ResultsTable";
 import { downloadCsv, downloadTxt } from "./components/export";
 import { calendarDiff } from "./components/time";
+import { FIX_SNIPPETS, FixTab } from "./components/fixsnippets";
 import {
   Category,
   Discovered,
@@ -80,6 +81,8 @@ export default function Page() {
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchResults, setBatchResults] = useState<BatchRow[]>([]);
+  const [fixTab, setFixTab] = useState<FixTab>("nginx");
+  const [fixCopied, setFixCopied] = useState(false);
 
   const searchAbort = useRef<AbortController | null>(null);
   const probeAbort = useRef<AbortController | null>(null);
@@ -325,6 +328,16 @@ export default function Page() {
 
   function exportPdf() {
     window.print();
+  }
+
+  function copyFixSnippet() {
+    navigator.clipboard?.writeText(FIX_SNIPPETS[fixTab]).then(
+      () => {
+        setFixCopied(true);
+        setTimeout(() => setFixCopied(false), 1500);
+      },
+      () => {}
+    );
   }
 
   const checkedCount = useMemo(() => Object.keys(probes).length, [probes]);
@@ -793,6 +806,40 @@ export default function Page() {
                   );
                 })}
               </ul>
+            </div>
+          )}
+
+          {rows.length > 0 && (
+            <div className="print:hidden mt-7 rounded-xl border border-line bg-surface p-5 shadow-sm">
+              <h3 className="text-sm font-bold tracking-tight">{t.fixTitle}</h3>
+              <p className="mt-1.5 max-w-[66ch] text-[13px] leading-relaxed text-ink-soft">{t.fixHint}</p>
+              <div className="mt-3.5 flex items-center gap-2">
+                <div className="flex gap-1 rounded-full border border-line bg-paper p-1 text-[13px]" role="group">
+                  {(["nginx", "apache", "nextjs"] as FixTab[]).map((tab) => (
+                    <button
+                      key={tab}
+                      type="button"
+                      onClick={() => setFixTab(tab)}
+                      aria-pressed={fixTab === tab}
+                      className={`rounded-full px-3 py-1 font-semibold transition-colors ${
+                        fixTab === tab ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
+                      }`}
+                    >
+                      {tab === "nginx" ? t.fixTabNginx : tab === "apache" ? t.fixTabApache : t.fixTabNextjs}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={copyFixSnippet}
+                  className="ml-auto rounded-lg border border-ink/20 px-3 py-1.5 text-[13px] font-semibold text-ink-soft transition-colors hover:border-ink hover:text-ink"
+                >
+                  {fixCopied ? t.fixCopied : t.fixCopy}
+                </button>
+              </div>
+              <pre className="mt-3 overflow-x-auto rounded-lg border border-line bg-paper p-4 font-mono text-[12.5px] leading-relaxed text-ink-soft">
+                {FIX_SNIPPETS[fixTab]}
+              </pre>
             </div>
           )}
 

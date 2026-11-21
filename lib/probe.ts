@@ -24,6 +24,13 @@ export type ProbeResult = {
   securityHeaders?: SecurityHeaders;
   /** Days until the TLS certificate expires; negative if already expired. Only set for https. */
   tlsDaysLeft?: number | null;
+  /** Negotiated TLS protocol version, e.g. "TLSv1.3". Only set for https. */
+  tlsProtocol?: string | null;
+  /** Negotiated cipher suite name. Only set for https. */
+  tlsCipher?: string | null;
+  /** True when the protocol (TLS 1.0/1.1/SSLv3) or cipher (RC4, DES, export-grade, …) is
+   *  considered weak by modern standards. */
+  tlsWeak?: boolean;
   /** CNAME target, if this host is an alias rather than a direct A/AAAA record. */
   cname?: string | null;
   /** Set only when a dangling-CNAME subdomain-takeover pattern was matched — see lib/takeover.ts. */
@@ -138,14 +145,24 @@ function request(host: string, scheme: "https" | "http", timeoutMs: number): Pro
         // below calls res.destroy(), which tears down the TLS socket, and a destroyed socket's
         // getPeerCertificate() comes back empty. Reading it now, before any of that, is safe.
         let tlsDaysLeft: number | null = null;
+        let tlsProtocol: string | null = null;
+        let tlsCipher: string | null = null;
+        let tlsWeak = false;
         if (scheme === "https") {
           try {
-            const cert = (res.socket as TLSSocket | undefined)?.getPeerCertificate?.();
+            const socket = res.socket as TLSSocket | undefined;
+            const cert = socket?.getPeerCertificate?.();
             if (cert?.valid_to) {
               tlsDaysLeft = Math.round((new Date(cert.valid_to).getTime() - Date.now()) / 86_400_000);
             }
+            tlsProtocol = socket?.getProtocol?.() ?? null;
+            const cipher = socket?.getCipher?.();
+            tlsCipher = cipher?.name ?? null;
+            const weakProtocol = tlsProtocol ? /^(SSLv2|SSLv3|TLSv1$|TLSv1\.1)/i.test(tlsProtocol) : false;
+            const weakCipher = tlsCipher ? /RC4|DES|NULL|EXPORT|MD5|ANON/i.test(tlsCipher) : false;
+            tlsWeak = weakProtocol || weakCipher;
           } catch {
-            // No certificate available — leave it unset.
+            // No certificate/cipher info available — leave it unset.
           }
         }
 
@@ -171,6 +188,9 @@ function request(host: string, scheme: "https" | "http", timeoutMs: number): Pro
             redirect: location,
             securityHeaders: checkSecurityHeaders(res.headers),
             tlsDaysLeft,
+            tlsProtocol,
+            tlsCipher,
+            tlsWeak,
             body,
           });
         };

@@ -15,11 +15,55 @@ export type ProbeResult = {
   error?: string;
   securityHeaders?: SecurityHeaders;
   tlsDaysLeft?: number | null;
+  tlsProtocol?: string | null;
+  tlsCipher?: string | null;
+  tlsWeak?: boolean;
   cname?: string | null;
   takeover?: TakeoverFinding | null;
   favicon?: FaviconInfo | null;
   robots?: RobotsInfo | null;
 };
+
+/**
+ * A single letter-grade summary of a host's security posture, rolled up from the header
+ * checks, TLS protocol/cipher and certificate expiry already gathered by the live probe.
+ * This is a heuristic scoring rubric for a quick read at a glance — not a substitute for a
+ * real audit, and nothing here is tested beyond the one page request already made.
+ */
+export type Grade = "A+" | "A" | "B" | "C" | "D" | "F";
+export type GradeResult = { grade: Grade; score: number };
+
+const HEADER_WEIGHTS: Record<string, number> = {
+  HSTS: 15,
+  CSP: 15,
+  "X-Frame-Options": 10,
+  "X-Content-Type-Options": 10,
+  "Referrer-Policy": 5,
+  "Permissions-Policy": 5,
+};
+
+export function securityGrade(probe?: ProbeResult): GradeResult | null {
+  if (!probe || probe.status === null) return null;
+
+  let score = 100;
+  if (probe.securityHeaders) {
+    for (const id of probe.securityHeaders.missing) score -= HEADER_WEIGHTS[id] ?? 5;
+  }
+  if (probe.scheme === "https") {
+    if (probe.tlsWeak) score -= 20;
+    if (typeof probe.tlsDaysLeft === "number") {
+      if (probe.tlsDaysLeft < 0) score -= 20;
+      else if (probe.tlsDaysLeft < 14) score -= 5;
+    }
+  } else if (probe.scheme === "http") {
+    score -= 25; // No TLS at all.
+  }
+  score = Math.max(0, Math.min(100, score));
+
+  const grade: Grade =
+    score >= 97 ? "A+" : score >= 90 ? "A" : score >= 80 ? "B" : score >= 70 ? "C" : score >= 60 ? "D" : "F";
+  return { grade, score };
+}
 
 export type IpInfo = { ip: string; org: string | null; country: string | null; error?: string };
 
